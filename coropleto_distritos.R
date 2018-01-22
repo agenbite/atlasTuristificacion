@@ -4,7 +4,11 @@ require(rgdal)
 require(spatialEco)
 require(spatial)
 require(sp)
-
+require(gpclib)
+require(mapproj)
+library(grid)
+library(gridExtra)
+library(ggthemes)
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 # Leemos los datos
@@ -23,7 +27,7 @@ alquileres <- read.csv("alquileres.csv")
 alquileres$id <- distris.ord@data$CODDISTRIT
 #alquileres$id <- 1:21
 
-distris.ord@data$subida <- alquileres$subida
+distris.ord@data$subida <- alquileres$delta1317
 
 distris.f <- fortify(distris.ord, region = "id")
 datos <- merge(distris.f, alquileres, by="id", all.x=TRUE)
@@ -31,19 +35,92 @@ datos <- merge(distris.f, alquileres, by="id", all.x=TRUE)
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 # A dibujar...
 
-titleGraph <- "Incremento del precio del alquiler en 2017"
+titleGraph <- "Incremento del precio del alquiler 2013-2017"
 
-ggplot(datos) +
+p1 <- ggplot(datos) +
     theme_minimal()+  # no backgroundcolor
-    geom_polygon(aes(x=long, y=lat, group=group,fill=subida),
+    geom_polygon(aes(x=long, y=lat, group=group,fill=delta1317),
                  color="black", alpha=1, size=0.1)+
-    scale_fill_gradient(name="Incremento (%)",
-                         high = "#132B43", low = "#56B1F7") +
-    labs(title=titleGraph) +
+    scale_fill_distiller(name="Incremento (%)",
+                         palette="BrBG", direction=-1)+
+    labs(title=titleGraph, subtitle="Fuente: idealista", x="", y="") +
+    theme(axis.text=element_text(size=14),
+          title=element_text(size=14), legend.position="right")
+    coord_map()
+p1
+
+ggsave(p1, "incremento_precio_alquiler_2017.png")
+
+
+# Tabla para diagrama de barras
+tabla <- unique(datos[,c("distrito","delta1317")])
+tabla$lab <- paste(format(round(tabla$delta1317,2), nsmall=2),"%",sep=" ")
+
+levels <- tabla$distrito[order(tabla$delta1317, decreasing=FALSE)]
+tabla$distrito <- factor(tabla$distrito, levels = levels)
+
+p2 <- ggplot(tabla, aes(x=distrito, y=delta1317,
+                        fill=delta1317, label=lab)) +
+    geom_col() +
+    theme_minimal()+  # no backgroundcolor
+    scale_fill_distiller(name="Incremento (%)",
+                         palette="BrBG", direction=-1)+
+    geom_text(size = 3, hjust = -0.1) +
+    labs(title=titleGraph, subtitle="Fuente: idealista", x="", y="") +
+    coord_flip() +
+    scale_y_continuous(limits = c(0, 37)) +
+    theme(axis.text=element_text(size=14),
+          title=element_text(size=14), legend.position="none")
+p2
+
+ggsave(p2, "incremento_precio_alquiler_2017_tabla.png")
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Combinar ambos gráficos
+
+p1 <- ggplot(datos) +
+    theme_minimal()+  # no backgroundcolor
+    geom_polygon(aes(x=long, y=lat, group=group,fill=delta1317),
+                 color="black", alpha=1, size=0.1)+
+    scale_fill_distiller(name="Incremento (%)",
+                         palette="BrBG", direction=-1)+
+    labs(x="", y="", caption="Fuente: idealista.com") +
+    ggthemes::theme_map() +
+    theme(legend.position=c(0.8,0.7),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank(),
+          rect = element_blank()) +
     coord_map()
 
-ggsave("incremento_precio_alquiler_2017.png")
+# Tabla para diagrama de barras
+tabla <- unique(datos[,c("distrito","delta1317")])
+tabla$lab <- paste(format(round(tabla$delta1317,2), nsmall=2),"%",sep=" ")
 
+levels <- tabla$distrito[order(tabla$delta1317, decreasing=FALSE)]
+tabla$distrito <- factor(tabla$distrito, levels = levels)
+
+p2 <- ggplot(tabla, aes(x=distrito, y=delta1317,
+                        fill=delta1317, label=lab)) +
+    geom_col() +
+    scale_fill_distiller(name="Incremento (%)",
+                         palette="BrBG", direction=-1)+
+    geom_text(size = 3., hjust = -0.1) +
+    labs(title=titleGraph, x="", y="") +
+    coord_flip() +
+    scale_y_continuous(limits = c(0, 40)) +
+    theme_minimal()+  # no backgroundcolor
+    theme(axis.text.y=element_text(size=14),
+          plot.title=element_text(size=16),
+          plot.caption=element_text(size=8),
+          legend.position="none",
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text.x = element_blank())
+
+p3 <- grid.arrange(p2, p1, ncol = 2)
+
+ggsave(grid.arrange(p2, p1, ncol = 2), filename="incremento_precio_alquiler_2013-2017.png", device="png")
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # #

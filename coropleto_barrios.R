@@ -1,9 +1,12 @@
 require(ggplot2)
 require(maptools)
 require(rgdal)
-require(spatialEco)
+library(spatialEco)
 require(spatial)
 require(sp)
+library(grid)
+library(gridExtra)
+library(ggthemes)
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -15,6 +18,7 @@ barrios <- spTransform(barrios.shp, CRS("+proj=longlat +datum=WGS84"))
 barrios.f <- fortify(barrios, region = "CODBARRIO")
 
 atlas <- read.csv("../atlasTuristificacion/atlas.csv")
+nombres <- read.csv("precio alquiler barrios.csv")$Nombre.de.barrio
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 # Calculamos el índice que queramos
@@ -24,22 +28,33 @@ atlas <- read.csv("../atlasTuristificacion/atlas.csv")
 indice <- as.data.frame(cbind(lat=atlas$lat, lon=atlas$lon,
                              i1 = (atlas$abnb_tot_beds +
                                    0.03329 * atlas$cad_tot_srf_hotels)/
-                             0.026))
+                                 0.026,
+                             i2 = atlas$abnb_tot_beds))
+                        
 
 indice$i1[is.na(indice$i1)] <- 0
+indice$i2[is.na(indice$i2)] <- 0
 
 coordinates(indice) <- ~lat+lon
 proj4string(indice) <- CRS("+proj=longlat +datum=WGS84")
 
 # Asignamos cada punto a su barrio correspondiente
-pts.poly <- point.in.poly(indice, barrios)
+## pts.poly <- point.in.poly(indice, barrios)
 
-index <- as.data.frame(tapply(pts.poly@data$i1,
-        pts.poly@data$CODBARRIO, FUN=mean, na.rm=TRUE))
-index$names <- rownames(index)
-colnames(index) <- c("index", "id")
+## pt.in.poly$i <- indice$i1
 
-index$lim <- cut(index$index, c(0,600,20000), labels = c("low", "high"))
+## index <- as.data.frame(tapply(pt.in.poly$i,
+##         pt.in.poly$CODBARRIO, FUN=mean, na.rm=TRUE))
+## index$names <- rownames(index)
+## colnames(index) <- c("index", "id")
+
+## index$lim <- cut(index$index, c(0,600,20000),
+##                  labels = c("low", "high"))
+
+# Asignamos cada punto a su barrio correspondiente (otra forma)
+index <- sp::over(barrios, indice, fn = mean)
+index$names <- barrios@data$NOMBRE
+index$id <- barrios@data$CODBARRIO
 
 
 # Los valores altos son demasiado grandes. Saturamos
@@ -54,9 +69,10 @@ index$lim <- cut(index$index, c(0,600,20000), labels = c("low", "high"))
 
 datos <- merge(barrios.f, index, by="id", all.x=TRUE)
 final.plot<-datos[order(datos$order), ]
-final.plot$indexF <- as.double(final.plot$index)
+final.plot$indexF <- as.double(final.plot$i1)
+## final.plot$indexF <- as.double(final.plot$i2)
 
-barrios@data$index <- index$index
+barrios@data$index <- index$i1
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -65,18 +81,19 @@ barrios@data$index <- index$index
 titleGraph <- expression("Camas para turistas por"~km^2)
 
 ggplot(final.plot) +
-    theme_minimal()+  # no backgroundcolor
     geom_polygon(aes(x = long, y = lat, group = group,
                      fill=indexF)) +
     geom_polygon(data=barrios.f,aes(x=long, y=lat, group=group),
                 color="black", alpha=0, size=0.1)+
-    ## geom_polygon(data=barrios.f,aes(x=long, y=lat, group=group),
-    ##              color=final.plot$lim, alpha=0, size=0.2)+
-    ## scale_color_manual(labels=c("","Zonas amenazadas"),
-    ##            values=c(NA,"red")) +
-    scale_fill_gradient(name=expression(camas/km^2),
-                        high = "#132B43", low = "#56B1F7") +
+    scale_fill_distiller(name="Incremento (%)",
+                         palette="BrBG", direction=-1)+
     labs(title=titleGraph) +
+    theme_minimal()+  # no backgroundcolor
+    ggthemes::theme_map() +
+    theme(legend.position="none", axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        rect = element_blank()) +
     coord_map()
 
 ggsave("camas_por_km2.png")
@@ -101,6 +118,115 @@ ggsave("camas_por_km2_2c.png")
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Combinar ambos gráficos
+titleGraph <- expression("Camas para turistas por"~km^2)
+
+p1 <- ggplot(final.plot) +
+    geom_polygon(aes(x = long, y = lat, group = group,
+                     fill=indexF)) +
+    geom_polygon(data=barrios.f,aes(x=long, y=lat, group=group),
+                color="black", alpha=0, size=0.1)+
+    scale_fill_distiller(name="Camas",
+                         palette="BrBG", direction=-1)+
+    labs(title="",
+         caption="Fuente: estimacion a partir de datos de turistificacion.300000kms.net",
+         y="", x="") +
+    theme_minimal()+  # no backgroundcolor
+    ggthemes::theme_map() +
+    theme(legend.position=c(0.8,0.7),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank(),
+          rect = element_blank()) +
+    coord_map()
+
+# Tabla para diagrama de barras
+tabla <- unique(final.plot[,c("names","i1")])
+tabla$lab <- format(round(tabla$i,0), nsmall=0)
+
+levels <- tabla$names[order(tabla$i1, decreasing=FALSE)]
+tabla$names <- factor(tabla$names, levels = levels)
+
+p2 <- ggplot(tabla[1:15,], aes(x=names, y=i1,
+                        fill=i1, label=lab)) +
+    geom_col() +
+    scale_fill_distiller(palette="BrBG", direction=-1)+
+    ## geom_text(size = 4, hjust = -0.1) +
+    labs(title=titleGraph, y="", x="") +
+    coord_flip() +
+    ## scale_x_discrete(breaks=NULL) +
+    scale_y_continuous(limits = c(0, 20000)) +
+    theme_minimal()+  # no backgroundcolor
+    theme(axis.text.y=element_text(size=14),
+          plot.title=element_text(size=14, face="bold"),
+          plot.caption=element_text(size=8),
+          legend.position="none",
+          panel.grid.major.y = element_blank() ,
+#          panel.grid.major = element_blank(),
+#          panel.grid.minor = element_blank(),
+          axis.text.x = element_text(size=10))
+p2
+
+p3 <- grid.arrange(p2, p1, ncol=2)
+
+ggsave(grid.arrange(p2, p1, ncol = 2),
+       filename="camas_por_km2.png", device="png")
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Combinar ambos gráficos
+titleGraph <- expression("Oferta AirBnB por"~km^2)
+
+p1 <- ggplot(final.plot) +
+    geom_polygon(aes(x = long, y = lat, group = group,
+                     fill=indexF)) +
+    geom_polygon(data=barrios.f,aes(x=long, y=lat, group=group),
+                color="black", alpha=0, size=0.1)+
+    scale_fill_distiller(name="Camas",
+                         palette="BrBG", direction=-1)+
+    labs(title="",
+         caption="Fuente: estimacion a partir de datos de turistificacion.300000kms.net",
+         y="", x="") +
+    theme_minimal()+  # no backgroundcolor
+    ggthemes::theme_map() +
+    theme(legend.position=c(0.8,0.7),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank(),
+          rect = element_blank()) +
+    coord_map()
+
+# Tabla para diagrama de barras
+tabla <- unique(final.plot[,c("names","i2")])
+tabla$lab <- format(round(tabla$i2,0), nsmall=0)
+
+levels <- tabla$names[order(tabla$i2, decreasing=FALSE)]
+tabla$names <- factor(tabla$names, levels = levels)
+
+p2 <- ggplot(tabla[1:15,], aes(x=names, y=i2,
+                        fill=i2, label=lab)) +
+    geom_col() +
+    scale_fill_distiller(palette="BrBG", direction=-1)+
+    ## geom_text(size = 4, hjust = -0.1) +
+    labs(title=titleGraph, y="", x="") +
+    coord_flip() +
+    ## scale_x_discrete(breaks=NULL) +
+    scale_y_continuous(limits = c(0, 125)) +
+    theme_minimal()+  # no backgroundcolor
+    theme(axis.text.y=element_text(size=14),
+          plot.title=element_text(size=14, face="bold"),
+          plot.caption=element_text(size=8),
+          legend.position="none",
+          panel.grid.major.y = element_blank() ,
+#          panel.grid.major = element_blank(),
+#          panel.grid.minor = element_blank(),
+          axis.text.x = element_text(size=10))
+p2
+
+p3 <- grid.arrange(p2, p1, ncol=2)
+
+ggsave(grid.arrange(p2, p1, ncol = 2),
+       filename="airbnb_por_km2.png", device="png")
+
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Coropleto interactivo
